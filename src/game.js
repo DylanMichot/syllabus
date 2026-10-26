@@ -49,6 +49,7 @@ const els = {
   result: $('result'),
   resultPoints: $('result-points'),
   resultDetail: $('result-detail'),
+  resultTiming: $('result-timing'),
   resultExamples: $('result-examples'),
 };
 
@@ -142,6 +143,7 @@ const state = {
   wordsCount: 0,
   lives: 0,
   used: new Set(),
+  responses: [], // mots validés : { ms, atFloor } (temps depuis l'affichage de la syllabe)
   remaining: new Set(),
   syllable: '',
   recent: [],
@@ -428,6 +430,7 @@ function startGame() {
   state.wordsCount = 0;
   state.lives = settings.reserveLives;
   state.used = new Set();
+  state.responses = [];
   state.remaining = new Set(state.alphabet);
   state.recent = [];
 
@@ -471,6 +474,10 @@ function submit() {
   }
 
   state.used.add(word);
+  state.responses.push({
+    ms: performance.now() - state.turnStart,
+    atFloor: state.wordsCount >= settings.timerFloorAt,
+  });
   state.wordsCount++;
   const hits = new Set();
   for (const letter of word) {
@@ -527,6 +534,7 @@ function gameOver(missed) {
   els.resultPoints.textContent = plural(state.points, 'point');
   els.resultDetail.textContent =
     `${plural(state.wordsCount, 'mot')} trouvé${state.wordsCount > 1 ? 's' : ''}${isRecord ? ' · Nouveau record !' : ''}`;
+  els.resultTiming.textContent = timingSummary();
   const ideas = examples(missed, 3);
   els.resultExamples.replaceChildren(
     'Avec ', bold(missed), ', vous auriez pu taper ',
@@ -534,6 +542,22 @@ function gameOver(missed) {
   );
   els.result.hidden = false;
   showMenu();
+}
+
+// Temps de réponse moyen des mots validés, en tout puis par phase du timer
+// (descente et plancher), pour aider à régler les durées.
+function timingSummary() {
+  const average = (list) => list.reduce((sum, r) => sum + r.ms, 0) / list.length / 1000;
+  const format = (s) => `${s.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
+  const all = state.responses;
+  if (!all.length) return '';
+  const descent = all.filter((r) => !r.atFloor);
+  const floor = all.filter((r) => r.atFloor);
+  let text = `Temps de réponse moyen : ${format(average(all))}`;
+  if (descent.length && floor.length) {
+    text += ` (${format(average(descent))} pendant la descente, ${format(average(floor))} au plancher)`;
+  }
+  return text;
 }
 
 function bold(text) {
