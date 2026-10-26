@@ -215,21 +215,6 @@ body {
 .result[hidden] { display: none; }
 .result-points { font-size: 36px; font-weight: 800; line-height: 1.1; }
 .result-detail { margin: 6px 0 0; color: var(--muted); }
-.result-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 20px;
-  margin: 14px 0 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.result-stats dt { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.result-stats dd {
-  margin: 2px 0 0;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
 .result-examples { margin: 10px 0 0; color: var(--muted); line-height: 1.5; }
 .result-examples b { color: var(--text); letter-spacing: .04em; }
 

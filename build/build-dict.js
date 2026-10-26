@@ -48,6 +48,13 @@ function frequencyClass(occurrences) {
   return Math.max(1, Math.min(9, Math.floor(zipf) + 4));
 }
 
+// Le jeu ne se sert de la fréquence que pour choisir des suggestions familières :
+// seuls les mots courants (classes 6 à 9) sont distingués, tout le reste vaut 0.
+// Niveaux : 4 = classe 9, 3 = classe 8, 2 = classe 7, 1 = classe 6, 0 = plus rare.
+function frequencyLevel(frequencyClass) {
+  return Math.max(0, frequencyClass - 5);
+}
+
 function readWords() {
   // Une forme fléchie peut apparaître sur plusieurs lignes (plusieurs lemmes) avec
   // les mêmes occurrences : on garde le maximum par forme, puis on additionne les
@@ -74,8 +81,8 @@ function readWords() {
     occurrences.set(word, (occurrences.get(word) || 0) + n);
   }
   const words = [...occurrences.keys()].sort();
-  const classes = words.map((w) => frequencyClass(occurrences.get(w))).join('');
-  return { words, classes, stats };
+  const levels = words.map((w) => frequencyLevel(frequencyClass(occurrences.get(w)))).join('');
+  return { words, levels, stats };
 }
 
 // Chaque mot devient : 1 caractère base 36 (longueur du préfixe commun avec le
@@ -121,7 +128,7 @@ function countSyllables(words) {
 }
 
 function main() {
-  const { words, classes, stats } = readWords();
+  const { words, levels, stats } = readWords();
   const encoded = prefixEncode(words);
 
   const decoded = prefixDecode(encoded);
@@ -129,9 +136,9 @@ function main() {
     throw new Error("L'encodage en préfixes ne se relit pas à l'identique");
   }
 
-  // Contenu compressé : mots encodés, saut de ligne, puis un chiffre (classe de
-  // fréquence) par mot, dans le même ordre alphabétique.
-  const payload = `${encoded}\n${classes}`;
+  // Contenu compressé : mots encodés, saut de ligne, puis un chiffre (niveau de
+  // fréquence, 0 à 4) par mot, dans le même ordre alphabétique.
+  const payload = `${encoded}\n${levels}`;
   const gzipped = zlib.gzipSync(Buffer.from(payload, 'ascii'), { level: 9 });
   const base64 = gzipped.toString('base64');
   const syllables = countSyllables(words);
@@ -140,7 +147,7 @@ function main() {
   const js =
     '// Généré par build/build-dict.js — ne pas modifier à la main.\n' +
     '// Mots issus du lexique Grammalecte v7.7 (MPL 2.0, https://grammalecte.net/).\n' +
-    `// ${words.length} mots encodés en préfixes, puis leurs classes de fréquence ; gzip, base64.\n` +
+    `// ${words.length} mots encodés en préfixes, puis leurs niveaux de fréquence ; gzip, base64.\n` +
     `const DICT_GZ_B64 = "${base64}";\n` +
     '// Syllabes : "SYLLABE:nombre de mots qui la contiennent", triées par fréquence.\n' +
     `const SYLLABLE_COUNTS = "${syllables.map(([s, c]) => `${s}:${c}`).join(' ')}";\n`;

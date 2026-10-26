@@ -44,4 +44,5 @@ npm run build:dict && npm run build
 Les mots proviennent du [lexique des formes fléchies de Grammalecte](https://grammalecte.net/)
 (v7.7, Olivier R.), distribué sous licence [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/).
 La liste a été filtrée (noms propres, sigles, mots composés, mots sans voyelle) et normalisée
-(majuscules, sans accents) par `build/build-dict.js`.
+(majuscules, sans accents) par `build/build-dict.js`. Les occurrences relevées par le lexique
+dans ses corpus servent à proposer des suggestions familières après un échec.

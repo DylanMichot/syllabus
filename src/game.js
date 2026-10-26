@@ -17,7 +17,7 @@ const SETTINGS = [
 const FIXED = {
   syllableNoRepeat: 15,    // une syllabe ne revient pas parmi les N dernières
   restartLockMs: 900,      // délai avant de pouvoir relancer (évite un Entrée accidentel)
-  examplePool: 6,          // suggestions tirées parmi les N mots (environ) les plus courants
+  familiarLevel: 2,        // niveau de fréquence minimal des suggestions (élargi si besoin)
   settingsKey: 'syllabus.settings',
   recordsKey: 'syllabus.records',
   // Couleur du timer : jaune quand il est plein, rouge quand il est vide.
@@ -49,7 +49,6 @@ const els = {
   result: $('result'),
   resultPoints: $('result-points'),
   resultDetail: $('result-detail'),
-  resultStats: $('result-stats'),
   resultExamples: $('result-examples'),
 };
 
@@ -77,7 +76,7 @@ function normalize(text) {
 }
 
 // Décode DICT_GZ_B64 : base64 -> gzip -> mots encodés en préfixes, saut de ligne,
-// puis une classe de fréquence (0 à 9) par mot (voir build-dict.js).
+// puis un niveau de fréquence (0 = rare à 4 = très courant) par mot (voir build-dict.js).
 async function loadDictionary() {
   const binary = atob(DICT_GZ_B64);
   const bytes = new Uint8Array(binary.length);
@@ -103,9 +102,9 @@ async function loadDictionary() {
     }
   }
 
-  const classes = new Uint8Array(list.length);
-  for (let i = 0; i < list.length; i++) classes[i] = text.charCodeAt(end + 1 + i) - 48;
-  return { list, classes };
+  const levels = new Uint8Array(list.length);
+  for (let i = 0; i < list.length; i++) levels[i] = text.charCodeAt(end + 1 + i) - 48;
+  return { list, levels };
 }
 
 const SYLLABLE_DATA = SYLLABLE_COUNTS.split(' ').map((entry) => {
@@ -128,11 +127,8 @@ function buildSyllableTable(minWords, exponent) {
 }
 
 let wordList = [];
-let wordClasses = new Uint8Array(0);
-let dictionary = new Map(); // mot -> classe de fréquence (9 = très courant, 0 = jamais vu)
-
-// Points de rareté d'un mot : 0 pour les plus courants, 9 pour ceux absents des corpus.
-const rarity = (frequencyClass) => 9 - frequencyClass;
+let wordLevels = new Uint8Array(0); // niveau de fréquence de chaque mot de wordList
+let dictionary = new Set();
 
 // ---- État ----
 
@@ -146,7 +142,6 @@ const state = {
   wordsCount: 0,
   lives: 0,
   used: new Set(),
-  history: [], // mots validés : { word, rarity, ms }
   remaining: new Set(),
   syllable: '',
   recent: [],
@@ -179,20 +174,43 @@ function turnDuration(validatedWords) {
   return (settings.timerStart + (settings.timerFloor - settings.timerStart) * progress) * 1000;
 }
 
-// Quelques mots possibles pour une syllabe, tirés parmi les plus courants de la
-// langue : on prend les classes de fréquence de la plus haute à la plus basse
-// jusqu'à avoir assez de candidats.
+// Suggestions pour une syllabe manquée, par ordre de priorité :
+// 1. des mots familiers : niveau de fréquence 2 ou plus (« assiette », « crise »),
+//    élargi au niveau 1 puis à tout le dictionnaire s'il n'y en a pas assez ;
+// 2. le plus de lettres encore à placer dans l'alphabet ;
+// 3. les mots les plus fréquents, puis au hasard en cas d'égalité.
+// Chaque suggestion suivante compte seulement les lettres que les précédentes ne couvrent pas.
 function examples(syllable, count) {
-  const byClass = Array.from({ length: 10 }, () => []);
+  const byLevel = [[], [], [], [], []];
   for (let i = 0; i < wordList.length; i++) {
     const word = wordList[i];
-    if (word.includes(syllable) && !state.used.has(word)) byClass[wordClasses[i]].push(word);
+    if (word.includes(syllable) && !state.used.has(word)) byLevel[wordLevels[i]].push(i);
   }
   let pool = [];
-  for (let c = 9; c >= 0 && pool.length < FIXED.examplePool; c--) pool = pool.concat(byClass[c]);
+  for (let level = 4; level >= 0; level--) {
+    if (level < FIXED.familiarLevel && pool.length >= count) break;
+    pool = pool.concat(byLevel[level]);
+  }
+
+  const missing = new Set(state.remaining);
+  const tieBreak = new Map(pool.map((i) => [i, Math.random()]));
   const picked = [];
   while (picked.length < count && pool.length) {
-    picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    let best = -1;
+    let bestLetters = -1;
+    for (let k = 0; k < pool.length; k++) {
+      const i = pool[k];
+      const letters = new Set([...wordList[i]].filter((l) => missing.has(l))).size;
+      if (best < 0 || letters > bestLetters
+        || (letters === bestLetters && (wordLevels[i] > wordLevels[pool[best]]
+          || (wordLevels[i] === wordLevels[pool[best]] && tieBreak.get(i) > tieBreak.get(pool[best]))))) {
+        best = k;
+        bestLetters = letters;
+      }
+    }
+    const word = wordList[pool.splice(best, 1)[0]];
+    for (const l of word) missing.delete(l);
+    picked.push(word);
   }
   return picked;
 }
@@ -305,7 +323,6 @@ function updateMenuInfo() {
   const record = getRecord(s);
   els.record.textContent = record
     ? `Record avec ces réglages : ${plural(record.points, 'point')} · ${plural(record.words, 'mot')}`
-      + ` · rareté ${record.rarity || 0}`
     : 'Pas encore de record avec ces réglages';
 }
 
@@ -411,7 +428,6 @@ function startGame() {
   state.wordsCount = 0;
   state.lives = settings.reserveLives;
   state.used = new Set();
-  state.history = [];
   state.remaining = new Set(state.alphabet);
   state.recent = [];
 
@@ -456,11 +472,6 @@ function submit() {
 
   state.used.add(word);
   state.wordsCount++;
-  state.history.push({
-    word,
-    rarity: rarity(dictionary.get(word)),
-    ms: performance.now() - state.turnStart,
-  });
   const hits = new Set();
   for (const letter of word) {
     if (state.remaining.delete(letter)) hits.add(letter);
@@ -507,22 +518,15 @@ function gameOver(missed) {
   setRing(0);
   renderWord();
 
-  const stats = gameStats();
-  const previous = getRecord(settings) || { points: 0, words: 0, rarity: 0 };
-  const isRecord = state.points > previous.points
+  const previous = getRecord(settings);
+  const isRecord = !previous
+    || state.points > previous.points
     || (state.points === previous.points && state.wordsCount > previous.words);
-  const isRarityRecord = stats.rarityTotal > (previous.rarity || 0);
-  setRecord(settings, {
-    points: isRecord ? state.points : previous.points,
-    words: isRecord ? state.wordsCount : previous.words,
-    rarity: Math.max(stats.rarityTotal, previous.rarity || 0),
-  });
+  if (isRecord) setRecord(settings, { points: state.points, words: state.wordsCount });
 
   els.resultPoints.textContent = plural(state.points, 'point');
-  const records = [isRecord && 'nouveau record', isRarityRecord && 'record de rareté'].filter(Boolean);
-  els.resultDetail.textContent = `${plural(state.wordsCount, 'mot')} trouvé${state.wordsCount > 1 ? 's' : ''}`
-    + (records.length ? ` · ${records.join(' et ')} !` : '');
-  renderStats(stats);
+  els.resultDetail.textContent =
+    `${plural(state.wordsCount, 'mot')} trouvé${state.wordsCount > 1 ? 's' : ''}${isRecord ? ' · Nouveau record !' : ''}`;
   const ideas = examples(missed, 3);
   els.resultExamples.replaceChildren(
     'Avec ', bold(missed), ', vous auriez pu taper ',
@@ -530,46 +534,6 @@ function gameOver(missed) {
   );
   els.result.hidden = false;
   showMenu();
-}
-
-function gameStats() {
-  const h = state.history;
-  const n = h.length;
-  const rarityTotal = h.reduce((sum, e) => sum + e.rarity, 0);
-  // Mot le plus rare : rareté maximale, puis le plus long en cas d'égalité.
-  const rarest = h.reduce((best, e) => (!best || e.rarity > best.rarity
-    || (e.rarity === best.rarity && e.word.length > best.word.length) ? e : best), null);
-  const longest = h.reduce((best, e) => (!best || e.word.length > best.word.length ? e : best), null);
-  return {
-    rarityTotal,
-    rarityAverage: n ? rarityTotal / n : 0,
-    rarest,
-    longest,
-    averageMs: n ? h.reduce((sum, e) => sum + e.ms, 0) / n : 0,
-    fastest: h.reduce((best, e) => (!best || e.ms < best.ms ? e : best), null),
-  };
-}
-
-const formatNumber = (x, digits = 1) => x.toLocaleString('fr-FR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-
-function renderStats(stats) {
-  const rows = [
-    ['Score de rareté', String(stats.rarityTotal)],
-    ['Rareté moyenne', `${formatNumber(stats.rarityAverage)} / 9`],
-    ['Mot le plus rare', stats.rarest ? `${stats.rarest.word} (rareté ${stats.rarest.rarity})` : '–'],
-    ['Mot le plus long', stats.longest ? `${stats.longest.word} (${stats.longest.word.length} lettres)` : '–'],
-    ['Temps moyen', stats.fastest ? `${formatNumber(stats.averageMs / 1000)} s` : '–'],
-    ['Plus rapide', stats.fastest ? `${stats.fastest.word} (${formatNumber(stats.fastest.ms / 1000)} s)` : '–'],
-  ];
-  els.resultStats.replaceChildren(...rows.map(([label, value]) => {
-    const item = document.createElement('div');
-    const dt = document.createElement('dt');
-    const dd = document.createElement('dd');
-    dt.textContent = label;
-    dd.textContent = value;
-    item.append(dt, dd);
-    return item;
-  }));
 }
 
 function bold(text) {
@@ -645,10 +609,10 @@ renderHud();
 showMenu();
 
 loadDictionary()
-  .then(({ list, classes }) => {
+  .then(({ list, levels }) => {
     wordList = list;
-    wordClasses = classes;
-    dictionary = new Map(list.map((word, i) => [word, classes[i]]));
+    wordLevels = levels;
+    dictionary = new Set(list);
     state.phase = 'ready';
     showMenu();
   })
