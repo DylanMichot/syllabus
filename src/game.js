@@ -6,7 +6,8 @@
 const SETTINGS = [
   { key: 'timerStart', label: 'Temps au départ', unit: 's', min: 2, max: 60, step: 0.5, def: 12 },
   { key: 'timerFloor', label: 'Temps plancher', unit: 's', min: 1, max: 60, step: 0.5, def: 5 },
-  { key: 'timerFloorAt', label: 'Plancher atteint après', unit: 'mots', min: 1, max: 500, step: 1, def: 40 },
+  { key: 'timerFloorAt', label: 'Plancher atteint après', unit: 'mots', min: 1, max: 500, step: 1, def: 12,
+    hint: 'Compté depuis le dernier alphabet complété' },
   { key: 'reserveLives', label: 'Vies de réserve', unit: 'max', min: 0, max: 5, step: 1, def: 1 },
   { key: 'syllableMinWords', label: 'Mots par syllabe', unit: 'min', min: 50, max: 20000, step: 50, def: 300 },
   { key: 'weightExponent', label: 'Poids des syllabes', unit: '', min: 0, max: 1, step: 0.1, def: 0.5,
@@ -18,8 +19,9 @@ const FIXED = {
   syllableNoRepeat: 15,    // une syllabe ne revient pas parmi les N dernières
   restartLockMs: 900,      // délai avant de pouvoir relancer (évite un Entrée accidentel)
   familiarLevel: 2,        // niveau de fréquence minimal des suggestions (élargi si besoin)
-  settingsKey: 'syllabus.settings',
-  recordsKey: 'syllabus.records',
+  // v2 : le timer repart à chaque alphabet, les anciens réglages et records ne sont plus comparables.
+  settingsKey: 'syllabus.settings.v2',
+  recordsKey: 'syllabus.records.v2',
   // Couleur du timer : jaune quand il est plein, rouge quand il est vide.
   ringFull: [255, 210, 63],
   ringEmpty: [255, 59, 79],
@@ -141,6 +143,7 @@ const state = {
   syllables: null,
   points: 0,
   wordsCount: 0,
+  alphabetWords: 0, // mots validés depuis le dernier alphabet complété (règle le timer)
   lives: 0,
   used: new Set(),
   responses: [], // mots validés : { ms, atFloor } (temps depuis l'affichage de la syllabe)
@@ -171,6 +174,7 @@ function drawSyllable() {
   }
 }
 
+// Durée du tour selon le nombre de mots validés depuis le dernier alphabet complété.
 function turnDuration(validatedWords) {
   const progress = Math.min(validatedWords / settings.timerFloorAt, 1);
   return (settings.timerStart + (settings.timerFloor - settings.timerStart) * progress) * 1000;
@@ -450,6 +454,7 @@ function startGame() {
   state.syllables = buildSyllableTable(settings.syllableMinWords, settings.weightExponent);
   state.points = 0;
   state.wordsCount = 0;
+  state.alphabetWords = 0;
   state.lives = settings.reserveLives;
   state.used = new Set();
   state.responses = [];
@@ -467,7 +472,7 @@ function startGame() {
 
 function nextTurn() {
   state.syllable = drawSyllable();
-  state.turnDuration = turnDuration(state.wordsCount);
+  state.turnDuration = turnDuration(state.alphabetWords);
   state.turnStart = performance.now();
   els.syllable.textContent = state.syllable;
   els.syllable.classList.remove('fresh');
@@ -498,9 +503,10 @@ function submit() {
   state.used.add(word);
   state.responses.push({
     ms: performance.now() - state.turnStart,
-    atFloor: state.wordsCount >= settings.timerFloorAt,
+    atFloor: state.alphabetWords >= settings.timerFloorAt,
   });
   state.wordsCount++;
+  state.alphabetWords++;
   const hits = new Set();
   for (const letter of word) {
     if (state.remaining.delete(letter)) hits.add(letter);
@@ -508,6 +514,7 @@ function submit() {
 
   if (state.remaining.size === 0) {
     state.points++;
+    state.alphabetWords = 0; // le timer repart de sa durée de départ
     state.remaining = new Set(state.alphabet);
     const regained = state.lives < settings.reserveLives;
     if (regained) {
