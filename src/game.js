@@ -217,6 +217,28 @@ function examples(syllable, count) {
   return picked;
 }
 
+// Mot le plus « évident » qui aurait coché au moins une lettre restante : le plus
+// fréquent, puis celui qui en coche le plus, puis le plus court. null s'il n'y en a pas.
+function missedOpportunity(syllable) {
+  let best = null;
+  let bestLevel = -1;
+  let bestLetters = 0;
+  for (let i = 0; i < wordList.length; i++) {
+    const word = wordList[i];
+    const level = wordLevels[i];
+    if (level < bestLevel || !word.includes(syllable) || state.used.has(word)) continue;
+    const letters = new Set([...word].filter((l) => state.remaining.has(l))).size;
+    if (!letters) continue;
+    if (level > bestLevel || letters > bestLetters
+      || (letters === bestLetters && word.length < best.length)) {
+      best = word;
+      bestLevel = level;
+      bestLetters = letters;
+    }
+  }
+  return best;
+}
+
 // ---- Réglages ----
 
 function defaultSettings() {
@@ -500,7 +522,10 @@ function submit() {
     showMessage(regained ? '+1 point · vie regagnée' : '+1 point', 'accent', 1800);
   } else {
     renderLetters(hits);
-    showMessage(word, 'ok', 1200);
+    // Aucune lettre cochée alors que c'était possible : on montre le mot évident (jaune).
+    const better = hits.size ? null : missedOpportunity(state.syllable);
+    if (better) showMessage(better, 'hint', 2500);
+    else showMessage(word, 'ok', 1200);
   }
   renderHud();
   nextTurn();
