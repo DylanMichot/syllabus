@@ -2,18 +2,29 @@
 
 // ---- Réglages ----
 
-const CONFIG = {
-  timerStart: 12,          // secondes pour le premier mot
-  timerFloor: 5,           // secondes une fois le plancher atteint
-  timerFloorAt: 40,        // mots validés pour atteindre le plancher (descente linéaire)
-  reserveLives: 1,         // timeouts tolérés avant la fin de partie
-  syllableMinWords: 300,   // une syllabe doit apparaître dans au moins ce nombre de mots
-  weightExponent: 0.5,     // poids = (nombre de mots) ^ exposant ; 1 = fréquence brute, 0 = uniforme
+// Réglages modifiables depuis l'écran d'accueil (valeurs par défaut ici).
+const SETTINGS = [
+  { key: 'timerStart', label: 'Temps au départ', unit: 's', min: 2, max: 60, step: 0.5, def: 12 },
+  { key: 'timerFloor', label: 'Temps plancher', unit: 's', min: 1, max: 60, step: 0.5, def: 5 },
+  { key: 'timerFloorAt', label: 'Plancher atteint après', unit: 'mots', min: 1, max: 500, step: 1, def: 40 },
+  { key: 'reserveLives', label: 'Vies de réserve', unit: 'max', min: 0, max: 5, step: 1, def: 1 },
+  { key: 'syllableMinWords', label: 'Mots par syllabe', unit: 'min', min: 50, max: 20000, step: 50, def: 300 },
+  { key: 'weightExponent', label: 'Poids des syllabes', unit: '', min: 0, max: 1, step: 0.1, def: 0.5,
+    hint: '0 : toutes égales · 1 : fréquence réelle' },
+  { key: 'excludedLetters', label: 'Lettres exclues', type: 'text', def: 'KW' },
+];
+
+const FIXED = {
   syllableNoRepeat: 15,    // une syllabe ne revient pas parmi les N dernières
-  alphabet: 'ABCDEFGHIJLMNOPQRSTUVXYZ', // sans K ni W
   restartLockMs: 900,      // délai avant de pouvoir relancer (évite un Entrée accidentel)
-  storageKey: 'syllabus.best',
+  settingsKey: 'syllabus.settings',
+  recordsKey: 'syllabus.records',
+  // Couleur du timer : jaune quand il est plein, rouge quand il est vide.
+  ringFull: [255, 210, 63],
+  ringEmpty: [255, 59, 79],
 };
+
+const FULL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 // ---- Éléments ----
 
@@ -29,9 +40,26 @@ const els = {
   word: $('word'),
   message: $('message'),
   input: $('input'),
-  overlay: $('overlay'),
-  card: $('card'),
+  menu: $('menu'),
+  settings: $('settings'),
+  play: $('play'),
+  reset: $('reset'),
+  record: $('record'),
+  result: $('result'),
+  resultPoints: $('result-points'),
+  resultDetail: $('result-detail'),
+  resultExamples: $('result-examples'),
 };
+
+// ---- Stockage local (facultatif : le jeu fonctionne sans) ----
+
+function readStorage(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+}
+
+function writeStorage(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignoré */ }
+}
 
 // ---- Données ----
 
@@ -73,15 +101,19 @@ async function loadDictionary() {
   return list;
 }
 
+const SYLLABLE_DATA = SYLLABLE_COUNTS.split(' ').map((entry) => {
+  const [syllable, count] = entry.split(':');
+  return [syllable, +count];
+});
+
 // Table de tirage : poids cumulés, pour un tirage pondéré par recherche dichotomique.
-function buildSyllableTable() {
+function buildSyllableTable(minWords, exponent) {
   const list = [];
   const cumulative = [];
   let total = 0;
-  for (const entry of SYLLABLE_COUNTS.split(' ')) {
-    const [syllable, count] = entry.split(':');
-    if (+count < CONFIG.syllableMinWords) continue;
-    total += Math.pow(+count, CONFIG.weightExponent);
+  for (const [syllable, count] of SYLLABLE_DATA) {
+    if (count < minWords) continue;
+    total += Math.pow(count, exponent);
     list.push(syllable);
     cumulative.push(total);
   }
@@ -90,12 +122,15 @@ function buildSyllableTable() {
 
 let wordList = [];
 let dictionary = new Set();
-const syllables = buildSyllableTable();
 
 // ---- État ----
 
+let settings = loadSettings();
+
 const state = {
   phase: 'loading', // loading | ready | playing | over
+  alphabet: '',
+  syllables: null,
   points: 0,
   wordsCount: 0,
   lives: 0,
@@ -109,7 +144,8 @@ const state = {
 };
 
 function drawSyllable() {
-  const { list, cumulative, total } = syllables;
+  const { list, cumulative, total } = state.syllables;
+  const noRepeat = Math.min(FIXED.syllableNoRepeat, list.length - 1);
   for (;;) {
     const r = Math.random() * total;
     let lo = 0;
@@ -119,16 +155,16 @@ function drawSyllable() {
       if (cumulative[mid] > r) hi = mid; else lo = mid + 1;
     }
     const syllable = list[lo];
-    if (state.recent.includes(syllable)) continue;
+    if (state.recent.slice(-noRepeat).includes(syllable)) continue;
     state.recent.push(syllable);
-    if (state.recent.length > CONFIG.syllableNoRepeat) state.recent.shift();
+    if (state.recent.length > FIXED.syllableNoRepeat) state.recent.shift();
     return syllable;
   }
 }
 
 function turnDuration(validatedWords) {
-  const progress = Math.min(validatedWords / CONFIG.timerFloorAt, 1);
-  return (CONFIG.timerStart + (CONFIG.timerFloor - CONFIG.timerStart) * progress) * 1000;
+  const progress = Math.min(validatedWords / settings.timerFloorAt, 1);
+  return (settings.timerStart + (settings.timerFloor - settings.timerStart) * progress) * 1000;
 }
 
 // Quelques mots possibles pour une syllabe, de préférence courts et non utilisés.
@@ -147,28 +183,130 @@ function examples(syllable, count) {
   return picked;
 }
 
-// ---- Record ----
+// ---- Réglages ----
 
-function loadBest() {
-  try {
-    const best = JSON.parse(localStorage.getItem(CONFIG.storageKey));
-    if (best && Number.isFinite(best.points)) return best;
-  } catch (e) { /* stockage indisponible */ }
-  return null;
+function defaultSettings() {
+  return Object.fromEntries(SETTINGS.map((s) => [s.key, s.def]));
 }
 
-function saveBest(best) {
-  try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(best)); } catch (e) { /* ignoré */ }
+function cleanSettings(raw) {
+  const clean = {};
+  for (const s of SETTINGS) {
+    const value = raw ? raw[s.key] : undefined;
+    if (s.type === 'text') {
+      clean[s.key] = [...new Set(normalize(String(value ?? s.def)))].sort().join('');
+    } else {
+      const n = parseFloat(value);
+      clean[s.key] = Number.isFinite(n) ? Math.min(s.max, Math.max(s.min, n)) : s.def;
+    }
+  }
+  // Il faut garder au moins quelques lettres, et le plancher ne dépasse pas le départ.
+  if (FULL_ALPHABET.length - clean.excludedLetters.length < 5) clean.excludedLetters = defaultSettings().excludedLetters;
+  clean.timerFloor = Math.min(clean.timerFloor, clean.timerStart);
+  return clean;
+}
+
+function loadSettings() {
+  return cleanSettings({ ...defaultSettings(), ...readStorage(FIXED.settingsKey) });
+}
+
+function settingsSignature(s) {
+  return SETTINGS.map((d) => s[d.key]).join('|');
+}
+
+function alphabetFor(s) {
+  return [...FULL_ALPHABET].filter((l) => !s.excludedLetters.includes(l)).join('');
+}
+
+// Le record est propre à chaque combinaison de réglages, pour que les scores restent comparables.
+function getRecord(s) {
+  const records = readStorage(FIXED.recordsKey) || {};
+  return records[settingsSignature(s)] || null;
+}
+
+function setRecord(s, record) {
+  const records = readStorage(FIXED.recordsKey) || {};
+  records[settingsSignature(s)] = record;
+  writeStorage(FIXED.recordsKey, records);
+}
+
+const settingInputs = new Map();
+
+function createSettingsForm() {
+  for (const s of SETTINGS) {
+    const row = document.createElement('label');
+    row.className = 'setting';
+    const name = document.createElement('span');
+    name.className = 'setting-label';
+    name.textContent = s.label;
+    const input = document.createElement('input');
+    input.name = s.key;
+    if (s.type === 'text') {
+      input.type = 'text';
+      input.maxLength = 21;
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+    } else {
+      input.type = 'number';
+      input.min = s.min;
+      input.max = s.max;
+      input.step = s.step;
+      input.inputMode = s.step < 1 ? 'decimal' : 'numeric';
+    }
+    const unit = document.createElement('span');
+    unit.className = 'setting-unit';
+    unit.textContent = s.unit || '';
+    row.append(name, input, unit);
+    if (s.hint || s.key === 'syllableMinWords' || s.key === 'excludedLetters') {
+      const hint = document.createElement('span');
+      hint.className = 'setting-hint';
+      hint.dataset.key = s.key;
+      hint.textContent = s.hint || '';
+      row.append(hint);
+    }
+    els.settings.append(row);
+    settingInputs.set(s.key, input);
+  }
+}
+
+function fillSettingsForm(s) {
+  for (const [key, input] of settingInputs) input.value = s[key];
+  updateMenuInfo();
+}
+
+function readSettingsForm() {
+  const raw = {};
+  for (const [key, input] of settingInputs) raw[key] = input.value;
+  return cleanSettings(raw);
+}
+
+// Informations qui dépendent des réglages en cours de saisie.
+function updateMenuInfo() {
+  const s = readSettingsForm();
+  const syllableCount = SYLLABLE_DATA.filter(([, c]) => c >= s.syllableMinWords).length;
+  els.settings.querySelector('[data-key="syllableMinWords"]').textContent =
+    `${syllableCount} syllabes possibles`;
+  els.settings.querySelector('[data-key="excludedLetters"]').textContent =
+    `Alphabet de ${alphabetFor(s).length} lettres`;
+  const record = getRecord(s);
+  els.record.textContent = record
+    ? `Record avec ces réglages : ${plural(record.points, 'point')} · ${plural(record.words, 'mot')}`
+    : 'Pas encore de record avec ces réglages';
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n > 1 ? 's' : ''}`;
 }
 
 // ---- Affichage ----
 
 const letterEls = new Map();
 
-function createLetters() {
-  const letters = [...CONFIG.alphabet];
-  letters.forEach((letter, i) => {
-    const angle = (i / letters.length) * 2 * Math.PI - Math.PI / 2;
+function createLetters(alphabet) {
+  els.letters.replaceChildren();
+  letterEls.clear();
+  [...alphabet].forEach((letter, i) => {
+    const angle = (i / alphabet.length) * 2 * Math.PI - Math.PI / 2;
     const el = document.createElement('span');
     el.className = 'letter';
     el.textContent = letter;
@@ -193,13 +331,8 @@ function renderLetters(hits = new Set()) {
 function renderHud() {
   els.points.textContent = state.points;
   els.words.textContent = state.wordsCount;
-  els.lives.replaceChildren();
-  for (let i = 0; i < CONFIG.reserveLives; i++) {
-    const heart = document.createElement('span');
-    heart.textContent = i < state.lives ? '♥' : '♡';
-    if (i >= state.lives) heart.className = 'lost';
-    els.lives.append(heart);
-  }
+  els.lives.textContent = state.lives;
+  els.lives.classList.toggle('empty', state.lives === 0);
 }
 
 function bump(el) {
@@ -240,25 +373,35 @@ function showMessage(text, tone = '', duration = 1500) {
   if (duration) messageTimer = setTimeout(() => els.message.classList.add('hidden'), duration);
 }
 
+// fraction : 1 = plein (jaune), 0 = vide (rouge), couleur interpolée linéairement.
 function setRing(fraction) {
-  els.ringBar.style.strokeDashoffset = 100 * (1 - fraction);
-  els.ringBar.style.visibility = fraction > 0 ? 'visible' : 'hidden'; // sinon l'extrémité arrondie reste visible
-  els.stage.classList.toggle('warn', fraction <= 0.5 && fraction > 0.25);
-  els.stage.classList.toggle('danger', fraction <= 0.25);
+  const f = Math.max(0, Math.min(1, fraction));
+  const rgb = FIXED.ringEmpty.map((empty, i) => Math.round(empty + (FIXED.ringFull[i] - empty) * f));
+  els.ringBar.style.stroke = `rgb(${rgb.join(',')})`;
+  els.ringBar.style.strokeDashoffset = 100 * (1 - f);
+  els.ringBar.style.visibility = f > 0 ? 'visible' : 'hidden'; // sinon l'extrémité arrondie reste visible
 }
 
 // ---- Partie ----
 
 function startGame() {
+  settings = readSettingsForm();
+  writeStorage(FIXED.settingsKey, settings);
+  fillSettingsForm(settings);
+
   state.phase = 'playing';
+  state.alphabet = alphabetFor(settings);
+  state.syllables = buildSyllableTable(settings.syllableMinWords, settings.weightExponent);
   state.points = 0;
   state.wordsCount = 0;
-  state.lives = CONFIG.reserveLives;
+  state.lives = settings.reserveLives;
   state.used = new Set();
-  state.remaining = new Set(CONFIG.alphabet);
+  state.remaining = new Set(state.alphabet);
   state.recent = [];
-  els.overlay.hidden = true;
+
+  els.menu.hidden = true;
   showMessage('', '', 0);
+  createLetters(state.alphabet);
   renderHud();
   renderLetters();
   nextTurn();
@@ -304,13 +447,18 @@ function submit() {
 
   if (state.remaining.size === 0) {
     state.points++;
-    state.remaining = new Set(CONFIG.alphabet);
+    state.remaining = new Set(state.alphabet);
+    const regained = state.lives < settings.reserveLives;
+    if (regained) {
+      state.lives++;
+      bump(els.lives);
+    }
     renderLetters();
     els.letters.classList.remove('complete');
     void els.letters.offsetWidth;
     els.letters.classList.add('complete');
     bump(els.points);
-    showMessage('Alphabet complet : +1 point !', 'accent', 1800);
+    showMessage(regained ? '+1 point · vie regagnée' : '+1 point', 'accent', 1800);
   } else {
     renderLetters(hits);
     showMessage(`✓ ${word}`, 'ok', 1200);
@@ -325,8 +473,7 @@ function timeout() {
     state.lives--;
     renderHud();
     bump(els.lives);
-    const ideas = examples(missed, 2);
-    showMessage(`Temps écoulé ! ${missed} : ${ideas.join(', ')}`, 'danger', 3000);
+    showMessage(examples(missed, 2).join(', '), 'danger', 3000);
     nextTurn();
   } else {
     gameOver(missed);
@@ -339,53 +486,41 @@ function gameOver(missed) {
   setRing(0);
   renderWord();
 
-  const previous = loadBest();
+  const previous = getRecord(settings);
   const isRecord = !previous
     || state.points > previous.points
     || (state.points === previous.points && state.wordsCount > previous.words);
-  if (isRecord) saveBest({ points: state.points, words: state.wordsCount });
-  const best = isRecord ? { points: state.points, words: state.wordsCount } : previous;
+  if (isRecord) setRecord(settings, { points: state.points, words: state.wordsCount });
 
-  const ideas = examples(missed, 3).map((w) => `<b>${w}</b>`).join(', ');
-  els.card.innerHTML = `
-    <h2>Partie terminée</h2>
-    <div class="big">${state.points} point${state.points > 1 ? 's' : ''}</div>
-    <p class="muted">${state.wordsCount} mot${state.wordsCount > 1 ? 's' : ''} trouvé${state.wordsCount > 1 ? 's' : ''}
-      · ${isRecord ? 'Nouveau record !' : `Record : ${best.points} pt · ${best.words} mots`}</p>
-    <p class="examples">Avec <b>${missed}</b>, vous auriez pu taper ${ideas}.</p>
-    <div class="actions">
-      <button type="button" id="play">Rejouer</button>
-      <span class="muted">ou <kbd>Entrée</kbd></span>
-    </div>`;
-  $('play').addEventListener('click', tryStart);
-  els.overlay.hidden = false;
+  els.resultPoints.textContent = plural(state.points, 'point');
+  els.resultDetail.textContent =
+    `${plural(state.wordsCount, 'mot')} trouvé${state.wordsCount > 1 ? 's' : ''}${isRecord ? ' · Nouveau record !' : ''}`;
+  const ideas = examples(missed, 3);
+  els.resultExamples.replaceChildren(
+    'Avec ', bold(missed), ', vous auriez pu taper ',
+    ...ideas.flatMap((w, i) => (i ? [', ', bold(w)] : [bold(w)])), '.',
+  );
+  els.result.hidden = false;
+  showMenu();
 }
 
-function showStartScreen() {
-  const best = loadBest();
+function bold(text) {
+  const b = document.createElement('b');
+  b.textContent = text;
+  return b;
+}
+
+function showMenu() {
+  fillSettingsForm(settings);
   const loading = state.phase === 'loading';
-  els.card.innerHTML = `
-    <h1>SYLLABUS</h1>
-    <p>Tapez un mot qui contient la syllabe affichée avant la fin du cercle.</p>
-    <ul>
-      <li>Chaque mot ne peut servir qu'une fois par partie.</li>
-      <li>Utilisez les ${CONFIG.alphabet.length} lettres de la couronne (sans K ni W) pour gagner un point.</li>
-      <li>Le temps passe de ${CONFIG.timerStart} à ${CONFIG.timerFloor} secondes au fil des mots.</li>
-      <li>Une seule vie de réserve, jamais regagnée.</li>
-      <li>Les accents sont ignorés.</li>
-    </ul>
-    ${best ? `<p class="muted">Record : ${best.points} pt · ${best.words} mots</p>` : ''}
-    <div class="actions">
-      <button type="button" id="play" ${loading ? 'disabled' : ''}>${loading ? 'Chargement…' : 'Jouer'}</button>
-      ${loading ? '' : '<span class="muted">ou <kbd>Entrée</kbd></span>'}
-    </div>`;
-  $('play').addEventListener('click', tryStart);
-  els.overlay.hidden = false;
+  els.play.disabled = loading;
+  els.play.textContent = loading ? 'Chargement…' : 'Jouer';
+  els.menu.hidden = false;
 }
 
 function tryStart() {
-  if (state.phase === 'ready') return startGame();
-  if (state.phase === 'over' && performance.now() - state.overAt > CONFIG.restartLockMs) startGame();
+  if (state.phase === 'ready') startGame();
+  else if (state.phase === 'over' && performance.now() - state.overAt > FIXED.restartLockMs) startGame();
 }
 
 // La boucle d'animation ne tourne que pendant une partie.
@@ -425,23 +560,30 @@ els.stage.addEventListener('pointerdown', (e) => {
 });
 window.addEventListener('resize', renderWord);
 
+els.settings.addEventListener('input', updateMenuInfo);
+els.settings.addEventListener('submit', (e) => e.preventDefault());
+els.settings.addEventListener('change', () => fillSettingsForm(readSettingsForm()));
+els.play.addEventListener('click', tryStart);
+els.reset.addEventListener('click', () => fillSettingsForm(defaultSettings()));
+
 // ---- Démarrage ----
 
-createLetters();
-state.remaining = new Set(CONFIG.alphabet);
+createSettingsForm();
+createLetters(alphabetFor(settings));
+state.remaining = new Set(alphabetFor(settings));
+state.lives = settings.reserveLives;
 renderLetters();
 renderHud();
-showStartScreen();
+showMenu();
 
 loadDictionary()
   .then((list) => {
     wordList = list;
     dictionary = new Set(list);
     state.phase = 'ready';
-    showStartScreen();
+    showMenu();
   })
   .catch((err) => {
-    els.card.innerHTML = '<h2>Erreur</h2><p>Le dictionnaire n\'a pas pu être chargé. '
-      + 'Ce navigateur est peut-être trop ancien.</p>';
+    els.play.textContent = 'Navigateur non compatible';
     console.error(err);
   });

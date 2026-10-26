@@ -18,8 +18,8 @@
       <span class="value" id="words">0</span>
     </div>
     <div class="stat">
-      <span class="label">Vie de réserve</span>
-      <span class="value lives" id="lives"></span>
+      <span class="label">Vies de réserve</span>
+      <span class="value lives" id="lives">0</span>
     </div>
   </header>
 
@@ -43,8 +43,31 @@
     (lexique v7.7, licence MPL 2.0)
   </footer>
 
-  <div class="overlay" id="overlay">
-    <div class="card" id="card"></div>
+  <div class="menu" id="menu">
+    <div class="menu-inner">
+      <h1 class="title">SYLLABUS</h1>
+
+      <section class="result" id="result" hidden>
+        <div class="result-points" id="result-points"></div>
+        <p class="result-detail" id="result-detail"></p>
+        <p class="result-examples" id="result-examples"></p>
+      </section>
+
+      <p class="rules">
+        Tapez un mot qui contient la syllabe avant que le cercle se vide. Chaque mot ne sert
+        qu'une fois. Utilisez toutes les lettres de la couronne pour gagner un point et regagner
+        une vie de réserve. Les accents sont ignorés.
+      </p>
+
+      <form class="settings" id="settings" autocomplete="off"></form>
+
+      <div class="start">
+        <button type="button" class="play" id="play" disabled>Chargement…</button>
+        <span class="start-hint"><kbd>Entrée</kbd> à tout moment</span>
+        <button type="button" class="reset" id="reset">Réglages par défaut</button>
+      </div>
+      <p class="record" id="record"></p>
+    </div>
   </div>
 
   <script src="../data/generated/data.js"></script>
