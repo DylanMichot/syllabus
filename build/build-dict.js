@@ -35,8 +35,24 @@ function normalize(word) {
     .toUpperCase();
 }
 
+// Nombre total de mots reconnus dans les corpus du lexique (en-tête du fichier).
+const CORPUS_TOTAL = 147442150426;
+
+// Classe de fréquence de 0 à 9, d'après l'échelle Zipf (log10 des occurrences par
+// milliard de mots) : 9 = Zipf ≥ 5 (« prix », « bien »), 8 = 4 à 5 (« crise »),
+// 7 = 3 à 4 (« assiette »), 6 = 2 à 3 (« sublimer »), 5 = 1 à 2 (« micelle »),
+// 4 = 0 à 1, 3 = -1 à 0, 2 = -2 à -1, 1 = moins de -2, 0 = jamais vu dans les corpus.
+function frequencyClass(occurrences) {
+  if (occurrences <= 0) return 0;
+  const zipf = Math.log10((occurrences / CORPUS_TOTAL) * 1e9);
+  return Math.max(1, Math.min(9, Math.floor(zipf) + 4));
+}
+
 function readWords() {
-  const words = new Set();
+  // Une forme fléchie peut apparaître sur plusieurs lignes (plusieurs lemmes) avec
+  // les mêmes occurrences : on garde le maximum par forme, puis on additionne les
+  // formes qui se confondent une fois les accents retirés (pêche, péché -> PECHE).
+  const formOccurrences = new Map();
   const stats = { entries: 0, notLowercase: 0, properNoun: 0, noVowel: 0 };
   for (const line of fs.readFileSync(SOURCE, 'utf8').split('\n')) {
     const cols = line.split('\t');
@@ -48,9 +64,18 @@ function readWords() {
     const word = normalize(form);
     if (!/^[A-Z]+$/.test(word)) throw new Error(`Normalisation incomplète : ${form} -> ${word}`);
     if (!HAS_VOWEL.test(word)) { stats.noVowel++; continue; }
-    words.add(word);
+    const occurrences = Number(cols[15]) || 0;
+    formOccurrences.set(form, Math.max(formOccurrences.get(form) || 0, occurrences));
   }
-  return { words: [...words].sort(), stats };
+
+  const occurrences = new Map();
+  for (const [form, n] of formOccurrences) {
+    const word = normalize(form);
+    occurrences.set(word, (occurrences.get(word) || 0) + n);
+  }
+  const words = [...occurrences.keys()].sort();
+  const classes = words.map((w) => frequencyClass(occurrences.get(w))).join('');
+  return { words, classes, stats };
 }
 
 // Chaque mot devient : 1 caractère base 36 (longueur du préfixe commun avec le
@@ -96,7 +121,7 @@ function countSyllables(words) {
 }
 
 function main() {
-  const { words, stats } = readWords();
+  const { words, classes, stats } = readWords();
   const encoded = prefixEncode(words);
 
   const decoded = prefixDecode(encoded);
@@ -104,7 +129,10 @@ function main() {
     throw new Error("L'encodage en préfixes ne se relit pas à l'identique");
   }
 
-  const gzipped = zlib.gzipSync(Buffer.from(encoded, 'ascii'), { level: 9 });
+  // Contenu compressé : mots encodés, saut de ligne, puis un chiffre (classe de
+  // fréquence) par mot, dans le même ordre alphabétique.
+  const payload = `${encoded}\n${classes}`;
+  const gzipped = zlib.gzipSync(Buffer.from(payload, 'ascii'), { level: 9 });
   const base64 = gzipped.toString('base64');
   const syllables = countSyllables(words);
 
@@ -112,7 +140,7 @@ function main() {
   const js =
     '// Généré par build/build-dict.js — ne pas modifier à la main.\n' +
     '// Mots issus du lexique Grammalecte v7.7 (MPL 2.0, https://grammalecte.net/).\n' +
-    `// ${words.length} mots, encodés en préfixes, gzip, base64.\n` +
+    `// ${words.length} mots encodés en préfixes, puis leurs classes de fréquence ; gzip, base64.\n` +
     `const DICT_GZ_B64 = "${base64}";\n` +
     '// Syllabes : "SYLLABE:nombre de mots qui la contiennent", triées par fréquence.\n' +
     `const SYLLABLE_COUNTS = "${syllables.map(([s, c]) => `${s}:${c}`).join(' ')}";\n`;
@@ -125,7 +153,7 @@ function main() {
   console.log('Mots uniques            ', words.length);
   console.log('Texte brut (octets)     ', words.join('\n').length);
   console.log('Préfixes (octets)       ', encoded.length);
-  console.log('Préfixes + gzip         ', gzipped.length);
+  console.log('+ fréquences, gzip      ', gzipped.length);
   console.log('… en base64             ', base64.length);
   console.log('Syllabes stockées (>=%d)', SYLLABLE_STORE_MIN, syllables.length);
   console.log('data.js (octets)        ', Buffer.byteLength(js));
