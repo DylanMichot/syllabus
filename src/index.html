@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Trouvez un mot contenant la syllabe avant la fin du temps imparti.">
+  <title>Syllabus</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hud">
+    <div class="stat">
+      <span class="label">Points</span>
+      <span class="value" id="points">0</span>
+    </div>
+    <div class="stat">
+      <span class="label">Mots</span>
+      <span class="value" id="words">0</span>
+    </div>
+    <div class="stat">
+      <span class="label">Vie de réserve</span>
+      <span class="value lives" id="lives"></span>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="ring-track" cx="50" cy="50" r="38"></circle>
+      <circle class="ring-bar" id="ring-bar" cx="50" cy="50" r="38" pathLength="100"></circle>
+    </svg>
+    <div class="letters" id="letters" aria-label="Lettres restantes"></div>
+    <div class="center">
+      <div class="syllable" id="syllable"></div>
+      <div class="word" id="word" aria-live="polite"></div>
+      <div class="message" id="message" aria-live="polite"></div>
+    </div>
+    <input class="typing-input" id="input" type="text" autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false" enterkeyhint="send" aria-label="Votre mot">
+  </main>
+
+  <footer class="credits">
+    Dictionnaire : <a href="https://grammalecte.net/" target="_blank" rel="noopener">Grammalecte</a>
+    (lexique v7.7, licence MPL 2.0)
+  </footer>
+
+  <div class="overlay" id="overlay">
+    <div class="card" id="card"></div>
+  </div>
+
+  <script src="../data/generated/data.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

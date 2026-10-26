@@ -1,0 +1,9 @@
+{
+  "name": "syllabus",
+  "private": true,
+  "description": "Jeu de mots solo inspiré de Bomb Party, en un seul fichier HTML.",
+  "scripts": {
+    "build:dict": "node build/build-dict.js",
+    "build": "node build/build-html.js"
+  }
+}
