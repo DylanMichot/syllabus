@@ -399,10 +399,10 @@ const SYLLABLE_COUNTS = "ER:129549 ES:97851 ON:92745 RA:91749 NT:89419 EN:85562 
 const SETTINGS = [
   { key: 'timerStart', label: 'Temps au départ', unit: 's', min: 2, max: 60, step: 0.5, def: 12 },
   { key: 'timerFloor', label: 'Temps plancher', unit: 's', min: 1, max: 60, step: 0.5, def: 5 },
-  { key: 'timerFloorAt', label: 'Plancher atteint après', unit: 'mots', min: 1, max: 500, step: 1, def: 12,
+  { key: 'timerFloorAt', label: 'Plancher atteint après', unit: 'mots', min: 1, max: 500, step: 1, def: 24,
     hint: 'Compté depuis le dernier alphabet complété' },
   { key: 'reserveLives', label: 'Vies de réserve', unit: 'max', min: 0, max: 5, step: 1, def: 1 },
-  { key: 'syllableMinWords', label: 'Mots par syllabe', unit: 'min', min: 50, max: 20000, step: 50, def: 300 },
+  { key: 'syllableMinWords', label: 'Mots par syllabe', unit: 'min', min: 50, max: 20000, step: 50, def: 500 },
   { key: 'weightExponent', label: 'Poids des syllabes', unit: '', min: 0, max: 1, step: 0.1, def: 0.5,
     hint: '0 : toutes égales · 1 : fréquence réelle' },
   { key: 'excludedLetters', label: 'Lettres exclues', type: 'text', def: 'KW' },
